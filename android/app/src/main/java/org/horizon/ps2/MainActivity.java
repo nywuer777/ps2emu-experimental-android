@@ -1,35 +1,243 @@
 package org.horizon.ps2;
 
 import android.app.Activity;
-import android.os.Bundle;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
+import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.view.Gravity;
-import android.widget.*;
-import java.io.*;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
-    static { System.loadLibrary("ps2emu_core"); System.loadLibrary("ps2emu_jni"); }
-    private native long nativeCreate(); private native void nativeDestroy(long h);
-    private native int nativeLoadBios(long h,String p); private native int nativeLoadDisc(long h,String p);
-    private native int nativeRun(long h,long steps); private native String nativeStatus(long h);
-    private long core; private String bios,iso; private final ExecutorService worker=Executors.newSingleThreadExecutor();
-    private TextView status; private Button biosButton,discButton,runButton;
-    private static final int PICK_BIOS=1,PICK_ISO=2;
-    @Override public void onCreate(Bundle b){super.onCreate(b);core=nativeCreate();
-      LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setPadding(28,48,28,24);root.setGravity(Gravity.CENTER_VERTICAL);root.setBackgroundColor(0xff101114);
-      TextView title=new TextView(this);title.setText("PS2 Experimental");title.setTextSize(28);title.setTextColor(-1);root.addView(title);
-      TextView note=new TextView(this);note.setText("Diagnóstico ARM64 do núcleo experimental. O boot de jogos ainda não está validado.");note.setTextSize(16);note.setTextColor(0xffc6c6cc);root.addView(note);
-      biosButton=button("Selecionar BIOS");discButton=button("Selecionar ISO");runButton=button("Executar 100 mil passos");status=new TextView(this);status.setTextColor(-1);status.setTextSize(14);
-      root.addView(biosButton);root.addView(discButton);root.addView(runButton);root.addView(status);setContentView(root);
-      biosButton.setOnClickListener(v->pick(PICK_BIOS));discButton.setOnClickListener(v->pick(PICK_ISO));runButton.setOnClickListener(v->run());refresh(); }
-    private Button button(String s){Button b=new Button(this);b.setText(s);return b;}
-    private void pick(int code){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,code);}
-    @Override protected void onActivityResult(int req,int res,Intent data){super.onActivityResult(req,res,data);if(res!=RESULT_OK||data==null)return;try{String p=copy(data.getData(),req==PICK_BIOS?"bios.bin":"disc.iso");if(req==PICK_BIOS){bios=p;int r=nativeLoadBios(core,bios);status.setText(r==0?"BIOS carregada nos mapas EE e IOP.\n"+nativeStatus(core):"Falha ao ler BIOS ("+r+")");}else{iso=p;int r=nativeLoadDisc(core,iso);status.setText(r==0?"ELF de SYSTEM.CNF carregado diretamente, sem boot da BIOS.\n"+nativeStatus(core):"Falha ao abrir ISO/ELF ("+r+")");}}catch(Exception e){status.setText("Falha ao importar arquivo: "+e.getMessage());}}
-    private String copy(Uri uri,String name)throws Exception{File f=new File(getFilesDir(),name);try(InputStream in=getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(f)){byte[]buf=new byte[65536];int n;while((n=in.read(buf))>0)out.write(buf,0,n);}return f.getAbsolutePath();}
-    private void run(){if(bios==null||iso==null){status.setText("Selecione BIOS e ISO primeiro.");return;}runButton.setEnabled(false);worker.execute(()->{int r=nativeRun(core,100000);runOnUiThread(()->{runButton.setEnabled(true);status.setText((r==0?"Execução concluída.\n":"Execução interrompida ("+r+").\n")+nativeStatus(core));});});}
-    private void refresh(){status.setText("Selecione BIOS e ISO. Este app expõe o probe integrado, não garante execução jogável.");}
-    @Override protected void onDestroy(){worker.shutdownNow();nativeDestroy(core);super.onDestroy();}
+    static {
+        System.loadLibrary("ps2emu_core");
+        System.loadLibrary("ps2emu_jni");
+    }
+
+    private native long nativeCreate();
+    private native void nativeDestroy(long handle);
+    private native int nativeLoadBios(long handle, String path);
+    private native int nativeLoadDisc(long handle, String path);
+    private native int nativeRun(long handle, long steps);
+    private native String nativeStatus(long handle);
+
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private long core;
+    private String biosPath;
+    private String isoPath;
+    private TextView status;
+    private Button biosButton;
+    private Button discButton;
+    private Button runButton;
+
+    private static final int PICK_BIOS = 1;
+    private static final int PICK_ISO = 2;
+    private static final long PROGRESS_INTERVAL = 8L * 1024L * 1024L;
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        core = nativeCreate();
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(28, 48, 28, 24);
+        root.setGravity(Gravity.CENTER_VERTICAL);
+        root.setBackgroundColor(0xff101114);
+
+        TextView title = new TextView(this);
+        title.setText("PS2 Experimental");
+        title.setTextSize(28);
+        title.setTextColor(0xffffffff);
+        root.addView(title);
+
+        TextView note = new TextView(this);
+        note.setText("Diagnóstico ARM64 do núcleo experimental. O boot de jogos ainda não está validado.");
+        note.setTextSize(16);
+        note.setTextColor(0xffc6c6cc);
+        root.addView(note);
+
+        biosButton = button("Selecionar BIOS");
+        discButton = button("Selecionar ISO");
+        runButton = button("Executar 100 mil passos");
+        status = new TextView(this);
+        status.setTextColor(0xffffffff);
+        status.setTextSize(14);
+
+        root.addView(biosButton);
+        root.addView(discButton);
+        root.addView(runButton);
+        root.addView(status);
+        setContentView(root);
+
+        biosButton.setOnClickListener(view -> pick(PICK_BIOS));
+        discButton.setOnClickListener(view -> pick(PICK_ISO));
+        runButton.setOnClickListener(view -> run());
+        refresh();
+    }
+
+    private Button button(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        return button;
+    }
+
+    private void pick(int requestCode) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.setType("*/*");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(intent, requestCode);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode != PICK_BIOS && requestCode != PICK_ISO) return;
+
+        final boolean isBios = requestCode == PICK_BIOS;
+        final Uri uri = data.getData();
+        setControlsEnabled(false);
+        status.setText(isBios
+                ? "Importando e validando a BIOS..."
+                : "Copiando a ISO para o armazenamento do app. A tela permanece ativa durante a cópia...");
+
+        worker.execute(() -> {
+            String fileName = isBios ? "bios.bin" : "disc.iso";
+            try {
+                String path = copy(uri, fileName, isBios);
+                int result = isBios
+                        ? nativeLoadBios(core, path)
+                        : nativeLoadDisc(core, path);
+                String nativeMessage = nativeStatus(core);
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if (result == 0) {
+                        if (isBios) biosPath = path;
+                        else isoPath = path;
+                        status.setText((isBios
+                                ? "BIOS carregada nos mapas EE e IOP.\n"
+                                : "ISO analisada; ELF de inicialização carregado diretamente.\n")
+                                + nativeMessage);
+                    } else {
+                        status.setText((isBios ? "Falha ao carregar BIOS" : "Falha ao analisar ISO")
+                                + " (" + result + ").\n" + nativeMessage);
+                    }
+                    setControlsEnabled(true);
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    status.setText("Falha ao importar " + (isBios ? "BIOS" : "ISO")
+                            + ": " + error.getMessage());
+                    setControlsEnabled(true);
+                });
+            }
+        });
+    }
+
+    private String copy(Uri uri, String name, boolean isBios) throws IOException {
+        long expectedBytes = querySize(uri);
+        File destination = new File(getFilesDir(), name);
+        long copiedBytes = 0;
+        long nextReportAt = PROGRESS_INTERVAL;
+
+        try (InputStream input = getContentResolver().openInputStream(uri);
+             FileOutputStream output = new FileOutputStream(destination, false)) {
+            if (input == null) throw new IOException("o provedor não abriu o arquivo");
+            byte[] buffer = new byte[256 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
+                copiedBytes += count;
+                if (!isBios && copiedBytes >= nextReportAt) {
+                    nextReportAt = copiedBytes + PROGRESS_INTERVAL;
+                    final long progress = copiedBytes;
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        status.setText(formatCopyProgress(progress, expectedBytes));
+                    });
+                }
+            }
+            output.getFD().sync();
+        }
+        return destination.getAbsolutePath();
+    }
+
+    private long querySize(Uri uri) {
+        try (Cursor cursor = getContentResolver().query(uri,
+                new String[]{OpenableColumns.SIZE}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int column = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (column >= 0 && !cursor.isNull(column)) return cursor.getLong(column);
+            }
+        } catch (Exception ignored) {
+            // Some document providers do not report a file size.
+        }
+        return -1;
+    }
+
+    private String formatCopyProgress(long copied, long total) {
+        double copiedMb = copied / (1024.0 * 1024.0);
+        if (total > 0) {
+            double totalMb = total / (1024.0 * 1024.0);
+            return String.format(Locale.ROOT, "Copiando ISO: %.0f de %.0f MB", copiedMb, totalMb);
+        }
+        return String.format(Locale.ROOT, "Copiando ISO: %.0f MB", copiedMb);
+    }
+
+    private void setControlsEnabled(boolean enabled) {
+        biosButton.setEnabled(enabled);
+        discButton.setEnabled(enabled);
+        runButton.setEnabled(enabled);
+    }
+
+    private void run() {
+        if (biosPath == null || isoPath == null) {
+            status.setText("Selecione uma BIOS e uma ISO válidas primeiro.");
+            return;
+        }
+        setControlsEnabled(false);
+        status.setText("Executando o probe do núcleo...");
+        worker.execute(() -> {
+            int result = nativeRun(core, 100_000);
+            String nativeMessage = nativeStatus(core);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                status.setText((result == 0
+                        ? "Probe concluído.\n"
+                        : "Probe interrompido (" + result + ").\n") + nativeMessage);
+                setControlsEnabled(true);
+            });
+        });
+    }
+
+    private void refresh() {
+        status.setText(core == 0
+                ? nativeStatus(core)
+                : "Selecione BIOS e ISO. Esta build valida a leitura e o probe, não inicia uma partida.");
+    }
+
+    @Override
+    protected void onDestroy() {
+        worker.execute(() -> {
+            if (core != 0) {
+                nativeDestroy(core);
+                core = 0;
+            }
+        });
+        worker.shutdown();
+        super.onDestroy();
+    }
 }
