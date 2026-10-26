@@ -14,7 +14,19 @@ struct AndroidCore {
     system: Ps2System,
     bios_loaded: bool,
     disc_loaded: bool,
+    bios_crc32: Option<u32>,
     status: String,
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= *byte as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+        }
+    }
+    !crc
 }
 
 fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
@@ -63,9 +75,13 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         .map(|(pc, instruction)| format!("{pc:08x}:{instruction:08x}"))
         .collect::<Vec<_>>()
         .join(" ");
+    let bios_fingerprint = core.bios_crc32
+        .map(|value| format!("\nBIOS CRC32: {value:08x}"))
+        .unwrap_or_default();
     core.status = format!(
-        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE exception: {} (ExcCode {})\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{} ({})\nEE last fault PC/instruction: {:#010x}/{:#010x} ({})\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
+        "{}{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE exception: {} (ExcCode {})\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{} ({})\nEE last fault PC/instruction: {:#010x}/{:#010x} ({})\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
+        bios_fingerprint,
         snapshot.pc,
         snapshot.retired_instructions,
         snapshot.exceptions_taken,
@@ -114,6 +130,7 @@ pub extern "C" fn ps2emu_create() -> *mut c_void {
         system: Ps2System::new(),
         bios_loaded: false,
         disc_loaded: false,
+        bios_crc32: None,
         status: String::new(),
     });
     set_status(&mut core, "Núcleo inicializado; selecione BIOS e ISO.");
@@ -150,6 +167,7 @@ pub unsafe extern "C" fn ps2emu_load_bios(
         Ok(()) => {
             core.bios_loaded = true;
             core.disc_loaded = false;
+            core.bios_crc32 = Some(crc32(&bytes));
             set_status(core, format!("BIOS aceita, {} bytes; mesma imagem usada nos mapas EE e IOP.", bytes.len()));
             0
         }
