@@ -24,6 +24,7 @@ pub struct Cpu {
     /// Scalar FPU registers store the IEEE-754 single-precision bit pattern.
     pub fpr: [u32; 32],
     pub fcr: [u32; 32],
+    pub fpu_acc: u32,
     /// VU0 vector data registers, exposed for COP2 moves and quadword loads.
     pub vu0_data: [u128; 32],
     pub vu0_acc: u128,
@@ -55,6 +56,7 @@ pub struct CpuSnapshot {
     pub cp0: [u32; 32],
     pub fpr: [u32; 32],
     pub fcr: [u32; 32],
+    pub fpu_acc: u32,
     pub vu0_data: [u128; 32],
     pub vu0_acc: u128,
     pub vu0_integer: [u16; 16],
@@ -757,6 +759,7 @@ impl Cpu {
             cp0,
             fpr: [0; 32],
             fcr: [0; 32],
+            fpu_acc: 0,
             vu0_data,
             vu0_acc: 0,
             vu0_integer: [0; 16],
@@ -788,6 +791,7 @@ impl Cpu {
             cp0: self.cp0,
             fpr: self.fpr,
             fcr: self.fcr,
+            fpu_acc: self.fpu_acc,
             vu0_data: self.vu0_data,
             vu0_acc: self.vu0_acc,
             vu0_integer: self.vu0_integer,
@@ -1440,6 +1444,7 @@ impl Cpu {
                         let integer = if rounded.is_nan() { i32::MIN } else { rounded.clamp(i32::MIN as f32, i32::MAX as f32) as i32 };
                         self.fpr[fd as usize] = integer as u32;
                     }
+                    0x18 => self.fpu_acc = (lhs + rhs).to_bits(), // ADDA.S
                     0x30 | 0x32 | 0x3c | 0x3e => {
                         let condition = match function {
                             0x30 => false,
