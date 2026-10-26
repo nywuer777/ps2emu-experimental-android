@@ -170,14 +170,12 @@ pub unsafe extern "C" fn ps2emu_run(handle: *mut c_void, steps: u64) -> i32 {
         return -2;
     }
     let initial_exceptions = core.system.ee().exceptions_taken;
-    match core.system.run_ee_steps_until_exception(steps) {
-        Ok(completed) => {
-            let message = if core.system.ee().exceptions_taken > initial_exceptions {
-                format!("Probe pausado na primeira exceção do EE após {completed} passos.")
-            } else {
-                format!("Probe concluído: {completed} passos solicitados sem nova exceção do EE.")
-            };
-            set_status(core, message);
+    match core.system.run_ee_steps(steps) {
+        Ok(()) => {
+            let new_exceptions = core.system.ee().exceptions_taken.saturating_sub(initial_exceptions);
+            set_status(core, format!(
+                "Probe avançou {steps} passos; novas exceções do EE: {new_exceptions}."
+            ));
             0
         }
         Err(error) => {
