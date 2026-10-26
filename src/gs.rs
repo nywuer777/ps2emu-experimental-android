@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 14542)
-Total output lines: 1328
-
 //! Initial software GS path: GIF packet decoding and a clipped RGBA framebuffer.
 
 use std::fmt;
@@ -500,7 +497,403 @@ impl Gs {
         if pixels.try_reserve_exact(pixel_count).is_err() { return; }
         let width = self.trx_width as usize;
         for index in 0..pixel_count {
-   …4542 tokens truncated…
+            let x = index % width;
+            let y = index / width;
+            let sx = Self::transfer_coordinate(self.trx_ssax, x, self.trx_position_direction & 1 != 0);
+            let sy = Self::transfer_coordinate(self.trx_ssay, y, self.trx_position_direction & 2 != 0);
+            let Some(pixel) = self.read_transfer_pixel(sx, sy) else { return; };
+            pixels.push(pixel);
+        }
+        for (index, pixel) in pixels.into_iter().enumerate() {
+            let x = index % width;
+            let y = index / width;
+            let dx = Self::transfer_coordinate(self.trx_dsax, x, self.trx_position_direction & 1 != 0);
+            let dy = Self::transfer_coordinate(self.trx_dsay, y, self.trx_position_direction & 2 != 0);
+            if !self.write_transfer_pixel(dx, dy, pixel) { return; }
+        }
+    }
+
+    fn write_transfer_pixel(&mut self, x: usize, y: usize, pixel: u32) -> bool {
+        match self.blit_dpsm {
+            0 | 1 => {
+                let address = Self::psmct32_address(self.blit_dbp, self.blit_dbw, x, y);
+                let old = u32::from_le_bytes(self.vram[address..address + 4].try_into().expect("wrapped GS transfer address"));
+                let value = if self.blit_dpsm == 1 { (old & 0xff00_0000) | (pixel & 0x00ff_ffff) } else { pixel };
+                self.vram[address..address + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            2 | 10 => {
+                let address = Self::psmct16_address(self.blit_dbp, self.blit_dbw, x, y, self.blit_dpsm == 10);
+                self.vram[address..address + 2].copy_from_slice(&(pixel as u16).to_le_bytes());
+            }
+            19 => {
+                let address = Self::psmt8_address(self.blit_dbp, self.blit_dbw, x, y);
+                self.vram[address] = pixel as u8;
+            }
+            20 => {
+                let (address, high_nibble) = Self::psmt4_address(self.blit_dbp, self.blit_dbw, x, y);
+                let old = self.vram[address];
+                self.vram[address] = if high_nibble { (old & 0x0f) | (((pixel as u8) & 0xf) << 4) } else { (old & 0xf0) | ((pixel as u8) & 0xf) };
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn submit_vertex(&mut self, value: u64) {
+        let vertex = Vertex {
+            x: ((value & 0xffff) as i16 as i32) - self.xyoffset_x,
+            y: (((value >> 16) & 0xffff) as i16 as i32) - self.xyoffset_y,
+            z: ((value >> 32) & 0x00ff_ffff) as u32,
+            color: self.rgbaq,
+            u: self.uv[0],
+            v: self.uv[1],
+            s: self.st[0],
+            t: self.st[1],
+            q: self.q,
+        };
+        match (self.primitive & 7) as u8 {
+            0 => self.draw_point(vertex),
+            1 => {
+                self.vertices.push(vertex);
+                if self.vertices.len() == 2 {
+                    self.draw_line(self.vertices[0], self.vertices[1]);
+                    self.vertices.clear();
+                }
+            }
+            2 => {
+                if let Some(previous) = self.vertices.last().copied() { self.draw_line(previous, vertex); }
+                self.vertices.clear();
+                self.vertices.push(vertex);
+            }
+            3 => {
+                self.vertices.push(vertex);
+                if self.vertices.len() == 3 {
+                    let vertices = [self.vertices[0], self.vertices[1], self.vertices[2]];
+                    self.draw_triangle(vertices);
+                    self.vertices.clear();
+                }
+            }
+            4 => {
+                self.vertices.push(vertex);
+                if self.vertices.len() >= 3 {
+                    let len = self.vertices.len();
+                    let mut triangle = [self.vertices[len - 3], self.vertices[len - 2], self.vertices[len - 1]];
+                    if self.primitive_vertices & 1 != 0 { triangle.swap(0, 1); }
+                    self.draw_triangle(triangle);
+                    self.vertices.drain(..len - 2);
+                }
+            }
+            5 => {
+                self.vertices.push(vertex);
+                if self.vertices.len() >= 3 {
+                    let len = self.vertices.len();
+                    let anchor = self.vertices[0];
+                    let previous = self.vertices[len - 1];
+                    self.draw_triangle([anchor, self.vertices[len - 2], previous]);
+                    self.vertices.clear();
+                    self.vertices.push(anchor);
+                    self.vertices.push(previous);
+                }
+            }
+            6 => {
+                self.vertices.push(vertex);
+                if self.vertices.len() == 2 {
+                    self.draw_sprite(self.vertices[0], self.vertices[1]);
+                    self.vertices.clear();
+                }
+            }
+            _ => {}
+        }
+        self.primitive_vertices = self.primitive_vertices.wrapping_add(1);
+    }
+
+    fn clip_bounds(&self) -> Option<(usize, usize, usize, usize)> {
+        let [x0, y0, x1, y1] = self.scissor;
+        let left = x0.min(self.width);
+        let top = y0.min(self.height);
+        let right = x1.min(self.width - 1);
+        let bottom = y1.min(self.height - 1);
+        (left <= right && top <= bottom).then_some((left, top, right, bottom))
+    }
+
+    fn draw_point(&mut self, vertex: Vertex) {
+        let x = vertex.x.div_euclid(16);
+        let y = vertex.y.div_euclid(16);
+        if x >= 0 && y >= 0 { self.put_pixel(x as usize, y as usize, vertex.color, vertex.z); }
+    }
+
+    fn draw_line(&mut self, a: Vertex, b: Vertex) {
+        let (mut x0, mut y0) = (a.x.div_euclid(16), a.y.div_euclid(16));
+        let (x1, y1) = (b.x.div_euclid(16), b.y.div_euclid(16));
+        let dx = (x1 - x0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let dy = -(y1 - y0).abs();
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut error = dx + dy;
+        let steps = dx.max(-dy).max(1);
+        let mut step = 0;
+        loop {
+            let z = (i64::from(a.z)
+                + (i64::from(b.z) - i64::from(a.z)) * i64::from(step) / i64::from(steps)) as u32;
+            if x0 >= 0 && y0 >= 0 { self.put_pixel(x0 as usize, y0 as usize, a.color, z); }
+            if x0 == x1 && y0 == y1 { break; }
+            let twice = error * 2;
+            if twice >= dy { error += dy; x0 += sx; }
+            if twice <= dx { error += dx; y0 += sy; }
+            step += 1;
+        }
+    }
+
+    fn draw_sprite(&mut self, a: Vertex, b: Vertex) {
+        let Some((clip_x0, clip_y0, clip_x1, clip_y1)) = self.clip_bounds() else { return; };
+        let left = a.x.min(b.x).div_euclid(16).max(clip_x0 as i32);
+        let top = a.y.min(b.y).div_euclid(16).max(clip_y0 as i32);
+        let right = a.x.max(b.x).div_euclid(16).min(clip_x1 as i32);
+        let bottom = a.y.max(b.y).div_euclid(16).min(clip_y1 as i32);
+        if left > right || top > bottom { return; }
+        let (x0, y0, x1, y1) = (left as usize, top as usize, right as usize, bottom as usize);
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let color = if self.texturing_enabled() {
+                    let (u, v) = self.sprite_texture_coordinates(a, b, x as i32 * 16 + 8, y as i32 * 16 + 8);
+                    self.texture_color(u, v, a.color)
+                } else { a.color };
+                let z = Self::interpolate_axis(a.z as i32, b.z as i32, x as i32 * 16 + 8, a.x, b.x);
+                self.put_pixel_unchecked(x, y, color, z.max(0) as u32);
+            }
+        }
+    }
+
+    fn draw_triangle(&mut self, mut vertices: [Vertex; 3]) {
+        let mut area = Self::edge(vertices[0], vertices[1], vertices[2].x, vertices[2].y);
+        if area == 0 { return; }
+        if area < 0 {
+            vertices.swap(1, 2);
+            area = -area;
+        }
+        let Some((clip_x0, clip_y0, clip_x1, clip_y1)) = self.clip_bounds() else { return; };
+        let min_x = vertices.iter().map(|v| v.x).min().unwrap().div_euclid(16).max(clip_x0 as i32);
+        let min_y = vertices.iter().map(|v| v.y).min().unwrap().div_euclid(16).max(clip_y0 as i32);
+        let max_x = vertices.iter().map(|v| v.x).max().unwrap().div_euclid(16).min(clip_x1 as i32);
+        let max_y = vertices.iter().map(|v| v.y).max().unwrap().div_euclid(16).min(clip_y1 as i32);
+        if min_x > max_x || min_y > max_y { return; }
+        let gouraud = self.primitive & (1 << 3) != 0;
+        let flat_color = vertices[0].color;
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let px = x * 16 + 8;
+                let py = y * 16 + 8;
+                let w0 = Self::edge(vertices[1], vertices[2], px, py);
+                let w1 = Self::edge(vertices[2], vertices[0], px, py);
+                let w2 = Self::edge(vertices[0], vertices[1], px, py);
+                if w0 < 0 || w1 < 0 || w2 < 0 { continue; }
+                let color = if gouraud { Self::interpolate_color(vertices.map(|v| v.color), [w0, w1, w2], area) } else { flat_color };
+                let color = if self.texturing_enabled() {
+                    let (u, v) = self.triangle_texture_coordinates(vertices, [w0, w1, w2], area);
+                    self.texture_color(u, v, color)
+                } else { color };
+                let z = Self::interpolate_scalar(vertices.map(|v| v.z as i32), [w0, w1, w2], area).max(0) as u32;
+                self.put_pixel_unchecked(x as usize, y as usize, color, z);
+            }
+        }
+    }
+
+    fn edge(a: Vertex, b: Vertex, x: i32, y: i32) -> i64 {
+        i64::from(x - a.x) * i64::from(b.y - a.y) - i64::from(y - a.y) * i64::from(b.x - a.x)
+    }
+
+    fn psmct32_address(base_pointer: u32, buffer_width: u32, x: usize, y: usize) -> usize {
+        // PSMCT32 local memory uses 64x32-pixel pages, 8x8-pixel blocks,
+        // and Morton ordering inside both a page and a block.
+        let page_width = buffer_width.max(1) as usize;
+        let page = (y / 32) * page_width + (x / 64);
+        let page_x = x & 63;
+        let page_y = y & 31;
+        let block = Self::morton(page_x / 8, page_y / 8, 3, 2);
+        let pixel = Self::morton(page_x & 7, page_y & 7, 3, 3);
+        ((base_pointer as usize * 256) + page * 8192 + block * 256 + pixel * 4)
+            & (GS_VRAM_SIZE - 1)
+    }
+
+    fn psmct16_address(base_pointer: u32, buffer_width: u32, x: usize, y: usize, signed: bool) -> usize {
+        // PSMCT16 uses 64x64 pages, 16x8 blocks, then four 16x2 columns.
+        const BLOCK: [usize; 32] = [
+            0, 2, 8, 10, 1, 3, 9, 11, 4, 6, 12, 14, 5, 7, 13, 15,
+            16, 18, 24, 26, 17, 19, 25, 27, 20, 22, 28, 30, 21, 23, 29, 31,
+        ];
+        const BLOCK_SIGNED: [usize; 32] = [
+            0, 2, 16, 18, 1, 3, 17, 19, 8, 10, 24, 26, 9, 11, 25, 27,
+            4, 6, 20, 22, 5, 7, 21, 23, 12, 14, 28, 30, 13, 15, 29, 31,
+        ];
+        const COLUMN_WORD: [usize; 32] = [
+            0, 1, 4, 5, 8, 9, 12, 13, 0, 1, 4, 5, 8, 9, 12, 13,
+            2, 3, 6, 7, 10, 11, 14, 15, 2, 3, 6, 7, 10, 11, 14, 15,
+        ];
+        const COLUMN_HALF: [usize; 32] = [
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+        ];
+        let page_width = buffer_width.max(1) as usize;
+        let page = (y / 64) * page_width + (x / 64);
+        let page_x = x & 63;
+        let page_y = y & 63;
+        let block_index = (page_y / 8) * 4 + page_x / 16;
+        let block = if signed { BLOCK_SIGNED[block_index] } else { BLOCK[block_index] };
+        let in_column = ((page_y & 1) * 16) + (page_x & 15);
+        let column = (page_y & 7) / 2;
+        let byte_address = (base_pointer as usize * 256)
+            + page * 8192
+            + block * 256
+            + column * 64
+            + COLUMN_WORD[in_column] * 4
+            + COLUMN_HALF[in_column] * 2;
+        byte_address & (GS_VRAM_SIZE - 1)
+    }
+
+    fn psmz32_address(base_pointer: u32, buffer_width: u32, x: usize, y: usize) -> usize {
+        // PSMZ32/24 share the 64x32 page and 8x8 block shape, with Z-order tables.
+        const BLOCK_Z32: [usize; 32] = [
+            24, 25, 28, 29, 8, 9, 12, 13,
+            26, 27, 30, 31, 10, 11, 14, 15,
+            16, 17, 20, 21, 0, 1, 4, 5,
+            18, 19, 22, 23, 2, 3, 6, 7,
+        ];
+        const COLUMN_WORD_Z32: [usize; 16] = [
+            0, 1, 4, 5, 8, 9, 12, 13,
+            2, 3, 6, 7, 10, 11, 14, 15,
+        ];
+        let page_width = buffer_width.max(1) as usize;
+        let page = (y / 32) * page_width + (x / 64);
+        let page_x = x & 63;
+        let page_y = y & 31;
+        let block_x = page_x / 8;
+        let block_y = page_y / 8;
+        let block = BLOCK_Z32[block_x + block_y * 8];
+        let in_block_x = page_x & 7;
+        let in_block_y = page_y & 7;
+        let column = in_block_y / 2;
+        let column_word = COLUMN_WORD_Z32[in_block_x + (in_block_y & 1) * 8];
+        ((base_pointer as usize * 256) + page * 8192 + block * 256 + column * 64 + column_word * 4)
+            & (GS_VRAM_SIZE - 1)
+    }
+
+    fn psmz16_address(base_pointer: u32, buffer_width: u32, x: usize, y: usize, signed: bool) -> usize {
+        const BLOCK_Z16: [usize; 32] = [
+            24, 26, 16, 18, 25, 27, 17, 19, 28, 30, 20, 22, 29, 31, 21, 23,
+            8, 10, 0, 2, 9, 11, 1, 3, 12, 14, 4, 6, 13, 15, 5, 7,
+        ];
+        const BLOCK_Z16S: [usize; 32] = [
+            24, 26, 8, 10, 25, 27, 9, 11, 16, 18, 0, 2, 17, 19, 1, 3,
+            28, 30, 12, 14, 29, 31, 13, 15, 20, 22, 4, 6, 21, 23, 5, 7,
+        ];
+        const COLUMN_WORD: [usize; 32] = [
+            0, 1, 4, 5, 8, 9, 12, 13, 0, 1, 4, 5, 8, 9, 12, 13,
+            2, 3, 6, 7, 10, 11, 14, 15, 2, 3, 6, 7, 10, 11, 14, 15,
+        ];
+        const COLUMN_HALF: [usize; 32] = [
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+        ];
+        let page_width = buffer_width.max(1) as usize;
+        let page = (y / 64) * page_width + (x / 64);
+        let page_x = x & 63;
+        let page_y = y & 63;
+        let block_index = (page_y / 8) * 4 + page_x / 16;
+        let block = if signed { BLOCK_Z16S[block_index] } else { BLOCK_Z16[block_index] };
+        let in_column = ((page_y & 1) * 16) + (page_x & 15);
+        let column = (page_y & 7) / 2;
+        let byte_address = (base_pointer as usize * 256)
+            + page * 8192
+            + block * 256
+            + column * 64
+            + COLUMN_WORD[in_column] * 4
+            + COLUMN_HALF[in_column] * 2;
+        byte_address & (GS_VRAM_SIZE - 1)
+    }
+
+    fn psmt8_address(base_pointer: u32, buffer_width: u32, x: usize, y: usize) -> usize {
+        const BLOCK: [usize; 32] = [
+            0, 1, 4, 5, 16, 17, 20, 21,
+            2, 3, 6, 7, 18, 19, 22, 23,
+            8, 9, 12, 13, 24, 25, 28, 29,
+            10, 11, 14, 15, 26, 27, 30, 31,
+        ];
+        const COLUMN_WORD_EVEN: [usize; 64] = [
+            0, 1, 4, 5, 8, 9, 12, 13, 0, 1, 4, 5, 8, 9, 12, 13,
+            2, 3, 6, 7, 10, 11, 14, 15, 2, 3, 6, 7, 10, 11, 14, 15,
+            8, 9, 12, 13, 0, 1, 4, 5, 8, 9, 12, 13, 0, 1, 4, 5,
+            10, 11, 14, 15, 2, 3, 6, 7, 10, 11, 14, 15, 2, 3, 6, 7,
+        ];
+        const COLUMN_WORD_ODD: [usize; 64] = [
+            8, 9, 12, 13, 0, 1, 4, 5, 8, 9, 12, 13, 0, 1, 4, 5,
+            10, 11, 14, 15, 2, 3, 6, 7, 10, 11, 14, 15, 2, 3, 6, 7,
+            0, 1, 4, 5, 8, 9, 12, 13, 0, 1, 4, 5, 8, 9, 12, 13,
+            2, 3, 6, 7, 10, 11, 14, 15, 2, 3, 6, 7, 10, 11, 14, 15,
+        ];
+        const COLUMN_BYTE: [usize; 64] = [
+            0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2,
+            0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2,
+            1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3,
+            1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3,
+        ];
+        let page_width = (buffer_width as usize / 2).max(1);
+        let page = (y / 64) * page_width + (x / 128);
+        let page_x = x & 127;
+        let page_y = y & 63;
+        let block_x = page_x / 16;
+        let block_y = page_y / 16;
+        let block = BLOCK[block_x + block_y * 8];
+        let in_block_x = page_x & 15;
+        let in_block_y = page_y & 15;
+        let column = in_block_y / 4;
+        let table_index = in_block_x + (in_block_y & 3) * 16;
+        let column_word = if column & 1 == 0 { COLUMN_WORD_EVEN[table_index] } else { COLUMN_WORD_ODD[table_index] };
+        let byte_address = base_pointer as usize * 256
+            + page * 8192
+            + block * 256
+            + column * 64
+            + column_word * 4
+            + COLUMN_BYTE[table_index];
+        byte_address & (GS_VRAM_SIZE - 1)
+    }
+
+    fn psmt4_address(base_pointer: u32, buffer_width: u32, x: usize, y: usize) -> (usize, bool) {
+        const BLOCK: [usize; 32] = [
+            0, 2, 8, 10, 1, 3, 9, 11,
+            4, 6, 12, 14, 5, 7, 13, 15,
+            16, 18, 24, 26, 17, 19, 25, 27,
+            20, 22, 28, 30, 21, 23, 29, 31,
+        ];
+        const A: [usize; 8] = [0, 1, 4, 5, 8, 9, 12, 13];
+        const B: [usize; 8] = [2, 3, 6, 7, 10, 11, 14, 15];
+        const C: [usize; 8] = [8, 9, 12, 13, 0, 1, 4, 5];
+        const D: [usize; 8] = [10, 11, 14, 15, 2, 3, 6, 7];
+
+        let page_width = (buffer_width as usize / 2).max(1);
+        let page = (y / 128) * page_width + (x / 128);
+        let page_x = x & 127;
+        let page_y = y & 127;
+        let block_x = page_x / 32;
+        let block_y = page_y / 16;
+        let block = BLOCK[block_x + block_y * 4];
+        let in_block_x = page_x & 31;
+        let in_block_y = page_y & 15;
+        let column = in_block_y / 4;
+        let table_x = in_block_x;
+        let table_y = in_block_y & 3;
+        let row = match (column & 1, table_y) {
+            (0, 0) | (1, 2) => A[table_x & 7],
+            (0, 1) | (1, 3) => B[table_x & 7],
+            (0, 2) | (1, 0) => C[table_x & 7],
+            (0, 3) | (1, 1) => D[table_x & 7],
+            _ => unreachable!(),
+        };
+        let column_byte = (table_x / 8) * 2 + (table_y & 1);
+        let byte_address = base_pointer as usize * 256
+            + page * 8192
+            + block * 256
+            + column * 64
+            + row * 4
             + column_byte / 2;
         (byte_address & (GS_VRAM_SIZE - 1), column_byte & 1 != 0)
     }
