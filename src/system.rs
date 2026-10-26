@@ -116,6 +116,7 @@ impl Ps2System {
 
     pub fn load_ee_elf(&mut self, image: &[u8]) -> Result<LoadedElf, Ps2Error> {
         let loaded = load_elf32_mips(image, &mut self.ee_memory)?;
+        self.ee_memory.reset_diagnostic_counters();
         self.ee = Cpu::new(loaded.entry);
         Ok(loaded)
     }

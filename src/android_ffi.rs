@@ -22,8 +22,9 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
     let snapshot = core.system.ee().snapshot();
     let iop = core.system.iop();
     let gs = core.system.ee_memory().gs();
+    let dma = core.system.ee_memory().diagnostic_counters();
     core.status = format!(
-        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE fault instruction: {:#010x}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
+        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE fault instruction: {:#010x}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
         snapshot.pc,
         snapshot.retired_instructions,
@@ -35,6 +36,14 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         iop.pc,
         iop.retired_instructions,
         iop.exceptions_taken,
+        dma[0],
+        dma[1],
+        dma[2],
+        dma[3],
+        snapshot.vu_microprograms_started[0],
+        snapshot.vu_microprograms_started[1],
+        dma[5],
+        dma[4],
         gs.submitted_vertices(),
         gs.ignored_register_writes(),
         core.system.scheduler_steps(),

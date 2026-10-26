@@ -146,6 +146,7 @@ pub struct Memory {
     vif1_tadr: u32,
     vif_dma_errors: [Option<String>; 2],
     vif_events: Vec<(u8, crate::vif::VifEvent)>,
+    diagnostic_counters: [u64; 6],
     timers: EeTimers,
     sif: SifBus,
     sif0_chcr: u32,
@@ -344,6 +345,7 @@ impl Memory {
             vif1_tadr: 0,
             vif_dma_errors: [None, None],
             vif_events: Vec::new(),
+            diagnostic_counters: [0; 6],
             timers: EeTimers::default(),
             sif,
             sif0_chcr: 0,
@@ -480,6 +482,15 @@ impl Memory {
         std::mem::take(&mut self.vif_events)
     }
 
+    /// VIF0, VIF1, unpack vectors, VU micro bytes, VIF DIRECT qwords, GIF DMA qwords.
+    pub fn diagnostic_counters(&self) -> [u64; 6] { self.diagnostic_counters }
+
+    pub fn reset_diagnostic_counters(&mut self) { self.diagnostic_counters = [0; 6]; }
+
+    pub(crate) fn record_vif_direct_qwords(&mut self, count: u64) {
+        self.diagnostic_counters[4] = self.diagnostic_counters[4].wrapping_add(count);
+    }
+
     /// Advance the coarse EE bus-clock model and raise timer INTC sources.
     /// Clock source 3 (HBLANK) remains idle until a GS timing device is added.
     pub fn advance_cycles(&mut self, cycles: u64) {
@@ -527,6 +538,9 @@ impl Memory {
             let result = self.execute_vif_stream(unit, &packet);
             match result {
                 Ok(report) => {
+                    self.diagnostic_counters[unit as usize] = self.diagnostic_counters[unit as usize].wrapping_add(1);
+                    self.diagnostic_counters[2] = self.diagnostic_counters[2].wrapping_add(report.unpack_vectors as u64);
+                    self.diagnostic_counters[3] = self.diagnostic_counters[3].wrapping_add(report.micro_bytes as u64);
                     self.vif_events.extend(report.events.into_iter().map(|event| (unit, event)));
                     if unit == 0 {
                         self.vif0_madr = final_madr;
@@ -670,6 +684,7 @@ impl Memory {
             self.gif_chcr &= !(1 << 8);
             return;
         }
+        self.diagnostic_counters[5] = self.diagnostic_counters[5].wrapping_add(packet.len() as u64);
         if (self.gif_chcr >> 2) & 3 == 0 {
             self.gif_madr = final_address & 0x7fff_fff0;
             self.gif_qwc = 0;

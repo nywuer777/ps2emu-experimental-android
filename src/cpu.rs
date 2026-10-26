@@ -36,6 +36,7 @@ pub struct Cpu {
     pub vu1_acc: u128,
     pub vu1_integer: [u16; 16],
     pub vu1_control: [u32; 32],
+    pub vu_microprograms_started: [u64; 2],
     pub pc: u32,
     pending_branch: Option<PendingBranch>,
     pub retired_instructions: u64,
@@ -67,6 +68,7 @@ pub struct CpuSnapshot {
     pub vu1_acc: u128,
     pub vu1_integer: [u16; 16],
     pub vu1_control: [u32; 32],
+    pub vu_microprograms_started: [u64; 2],
     pub retired_instructions: u64,
     pub exceptions_taken: u64,
     pub last_exception_instruction: u32,
@@ -770,6 +772,7 @@ impl Cpu {
             vu1_acc: 0,
             vu1_integer: [0; 16],
             vu1_control: [0; 32],
+            vu_microprograms_started: [0; 2],
             pc: entry,
             pending_branch: None,
             retired_instructions: 0,
@@ -802,6 +805,7 @@ impl Cpu {
             vu1_acc: self.vu1_acc,
             vu1_integer: self.vu1_integer,
             vu1_control: self.vu1_control,
+            vu_microprograms_started: self.vu_microprograms_started,
             retired_instructions: self.retired_instructions,
             exceptions_taken: self.exceptions_taken,
             last_exception_instruction: self.last_exception_instruction,
@@ -917,8 +921,14 @@ impl Cpu {
         for (unit, event) in memory.take_vif_events() {
             if unit > 1 { continue; }
             let (start, top, itop) = match event {
-                VifEvent::StartMicroProgram { address, top, itop, .. } => (Some(address as u32), top, itop),
-                VifEvent::ContinueMicroProgram { top, itop } => (Some(self.vu_control(unit, 26)), top, itop),
+                VifEvent::StartMicroProgram { address, top, itop, .. } => {
+                    self.vu_microprograms_started[unit as usize] = self.vu_microprograms_started[unit as usize].wrapping_add(1);
+                    (Some(address as u32), top, itop)
+                }
+                VifEvent::ContinueMicroProgram { top, itop } => {
+                    self.vu_microprograms_started[unit as usize] = self.vu_microprograms_started[unit as usize].wrapping_add(1);
+                    (Some(self.vu_control(unit, 26)), top, itop)
+                }
                 VifEvent::Mark(_) => (None, 0, 0),
             };
             if let Some(start) = start {

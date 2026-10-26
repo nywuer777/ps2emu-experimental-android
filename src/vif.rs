@@ -142,6 +142,7 @@ impl Vif {
                     let payload = take(stream, &mut cursor, size)?;
                     let qwords = payload.chunks_exact(16).map(|q| u128::from_le_bytes(q.try_into().expect("16-byte GIF qword"))).collect::<Vec<_>>();
                     memory.gs_mut().submit_gif(&qwords).map_err(|e| VifError::Gif(e.to_string()))?;
+                    memory.record_vif_direct_qwords(count as u64);
                     report.direct_qwords += count;
                 }
                 0x60..=0x7f => {
