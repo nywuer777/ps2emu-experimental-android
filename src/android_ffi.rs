@@ -25,13 +25,27 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
     let exception_epc_instruction = core.system.ee_memory()
         .read_u32(snapshot.cp0[14])
         .unwrap_or(0);
+    let exception_opcode = exception_epc_instruction >> 26;
+    let exception_mmi_function = exception_epc_instruction & 0x3f;
+    let fault_opcode = snapshot.last_exception_instruction >> 26;
+    let fault_mmi_function = snapshot.last_exception_instruction & 0x3f;
+    let opcode_diagnostic = if exception_opcode == 0x1c {
+        format!("MMI function {exception_mmi_function:#04x}")
+    } else {
+        format!("primary opcode {exception_opcode:#04x}")
+    };
+    let fault_diagnostic = if fault_opcode == 0x1c {
+        format!("MMI function {fault_mmi_function:#04x}")
+    } else {
+        format!("primary opcode {fault_opcode:#04x}")
+    };
     let recent_trace = core.system.recent_ee_trace();
     let recent_trace = recent_trace.iter().rev().take(8).rev()
         .map(|(pc, instruction)| format!("{pc:08x}:{instruction:08x}"))
         .collect::<Vec<_>>()
         .join(" ");
     core.status = format!(
-        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{}\nEE last fault PC/instruction: {:#010x}/{:#010x}\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
+        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{} ({})\nEE last fault PC/instruction: {:#010x}/{:#010x} ({})\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
         snapshot.pc,
         snapshot.retired_instructions,
@@ -41,8 +55,10 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         snapshot.cp0[8],
         exception_epc_instruction,
         snapshot.cp0[13] >> 31 != 0,
+        opcode_diagnostic,
         snapshot.last_exception_pc,
         snapshot.last_exception_instruction,
+        fault_diagnostic,
         snapshot.gpr[1] as u32,
         snapshot.gpr[2] as u32,
         snapshot.gpr[3] as u32,
@@ -158,11 +174,11 @@ pub unsafe extern "C" fn ps2emu_run(handle: *mut c_void, steps: u64) -> i32 {
         return -2;
     }
     let initial_exceptions = core.system.ee().exceptions_taken;
-    match core.system.run_ee_steps(steps) {
-        Ok(()) => {
+    match core.system.run_ee_steps_until_exception(steps) {
+        Ok(completed_steps) => {
             let new_exceptions = core.system.ee().exceptions_taken.saturating_sub(initial_exceptions);
             set_status(core, format!(
-                "Probe avançou {steps} passos; novas exceções do EE: {new_exceptions}."
+                "Probe parou após {completed_steps} de {steps} passos; novas exceções do EE: {new_exceptions}."
             ));
             0
         }
