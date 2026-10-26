@@ -71,6 +71,7 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         snapshot.exceptions_taken,
         exception_name,
         exception_code,
+        snapshot.cp0[13],
         snapshot.cp0[14],
         snapshot.cp0[8],
         exception_epc_instruction,
