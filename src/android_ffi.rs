@@ -23,7 +23,7 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
     let iop = core.system.iop();
     let gs = core.system.ee_memory().gs();
     core.status = format!(
-        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
+        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE fault instruction: {:#010x}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
         snapshot.pc,
         snapshot.retired_instructions,
@@ -31,6 +31,7 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         (snapshot.cp0[13] >> 2) & 0x1f,
         snapshot.cp0[14],
         snapshot.cp0[8],
+        snapshot.last_exception_instruction,
         iop.pc,
         iop.retired_instructions,
         iop.exceptions_taken,
@@ -150,9 +151,15 @@ pub unsafe extern "C" fn ps2emu_run(handle: *mut c_void, steps: u64) -> i32 {
         set_status(core, "Selecione uma BIOS aceita e uma ISO com ELF inicializável.");
         return -2;
     }
-    match core.system.run_ee_steps(steps) {
-        Ok(()) => {
-            set_status(core, format!("Probe concluído: {steps} passos solicitados."));
+    let initial_exceptions = core.system.ee().exceptions_taken;
+    match core.system.run_ee_steps_until_exception(steps) {
+        Ok(completed) => {
+            let message = if core.system.ee().exceptions_taken > initial_exceptions {
+                format!("Probe pausado na primeira exceção do EE após {completed} passos.")
+            } else {
+                format!("Probe concluído: {completed} passos solicitados sem nova exceção do EE.")
+            };
+            set_status(core, message);
             0
         }
         Err(error) => {
