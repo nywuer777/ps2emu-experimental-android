@@ -30,6 +30,7 @@ public final class MainActivity extends Activity {
     private native void nativeDestroy(long handle);
     private native int nativeLoadBios(long handle, String path);
     private native int nativeLoadDisc(long handle, String path);
+    private native int nativeLoadDiscElf(long handle, String path);
     private native int nativeRun(long handle, long steps);
     private native String nativeStatus(long handle);
 
@@ -41,10 +42,12 @@ public final class MainActivity extends Activity {
     private Button biosButton;
     private Button discButton;
     private Button runButton;
+    private Button directRunButton;
 
     private static final int PICK_BIOS = 1;
     private static final int PICK_ISO = 2;
     private static final long PROBE_STEPS = 16_000_000L;
+    private static final long DIRECT_PROBE_STEPS = 1_000_000L;
     private static final long PROGRESS_INTERVAL = 8L * 1024L * 1024L;
 
     @Override
@@ -77,7 +80,8 @@ public final class MainActivity extends Activity {
 
         biosButton = button("Selecionar BIOS");
         discButton = button("Selecionar ISO");
-        runButton = button("Executar até exceção (limite 16M)");
+        runButton = button("Executar BIOS até exceção (limite 16M)");
+        directRunButton = button("Executar ELF direto até exceção (limite 1M)");
         status = new TextView(this);
         status.setTextColor(0xffffffff);
         status.setTextSize(14);
@@ -91,6 +95,7 @@ public final class MainActivity extends Activity {
         root.addView(biosButton);
         root.addView(discButton);
         root.addView(runButton);
+        root.addView(directRunButton);
         root.addView(statusScroller, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
@@ -98,6 +103,7 @@ public final class MainActivity extends Activity {
         biosButton.setOnClickListener(view -> pick(PICK_BIOS));
         discButton.setOnClickListener(view -> pick(PICK_ISO));
         runButton.setOnClickListener(view -> run());
+        directRunButton.setOnClickListener(view -> runDirectElf());
         refresh();
     }
 
@@ -215,6 +221,7 @@ public final class MainActivity extends Activity {
         biosButton.setEnabled(enabled);
         discButton.setEnabled(enabled);
         runButton.setEnabled(enabled);
+        directRunButton.setEnabled(enabled);
     }
 
     private void run() {
@@ -232,6 +239,30 @@ public final class MainActivity extends Activity {
                 status.setText((result == 0
                         ? "Probe concluído.\n"
                         : "Probe interrompido (" + result + ").\n") + nativeMessage);
+                setControlsEnabled(true);
+            });
+        });
+    }
+
+    private void runDirectElf() {
+        if (isoPath == null) {
+            status.setText("Selecione uma ISO com SYSTEM.CNF e ELF de boot.");
+            return;
+        }
+        setControlsEnabled(false);
+        status.setText("Carregando o ELF da ISO e executando sem BIOS...");
+        worker.execute(() -> {
+            int loadResult = nativeLoadDiscElf(core, isoPath);
+            int runResult = loadResult == 0
+                    ? nativeRun(core, DIRECT_PROBE_STEPS)
+                    : loadResult;
+            String nativeMessage = nativeStatus(core);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                status.setText((runResult == 0
+                        ? "Probe ELF direto concluído. Este caminho não representa boot completo.\n"
+                        : "Probe ELF direto interrompido (" + runResult + ").\n")
+                        + nativeMessage);
                 setControlsEnabled(true);
             });
         });
