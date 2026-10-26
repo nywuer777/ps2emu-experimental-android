@@ -1,10 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(ps2emu_android)
-add_library(ps2emu_core SHARED IMPORTED)
-set_target_properties(ps2emu_core PROPERTIES
-    IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libps2emu_core.so
-    IMPORTED_SONAME libps2emu_core.so
-)
 add_library(ps2emu_jni SHARED bridge.c)
-target_link_libraries(ps2emu_jni ps2emu_core log)
+target_link_libraries(ps2emu_jni log dl)
 target_link_options(ps2emu_jni PRIVATE "-Wl,-z,max-page-size=16384")
