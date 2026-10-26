@@ -1,7 +1,6 @@
 //! Small C ABI used by the experimental Android diagnostic shell.
 //!
-//! This exposes the existing Rust bring-up path. It does not add a PS2 BIOS
-//! boot sequence or claim compatibility with commercial games.
+//! This exposes the experimental BIOS and CDVD bring-up path.
 
 use crate::{CdvdImage, Ps2System};
 use std::{
@@ -138,27 +137,10 @@ pub unsafe extern "C" fn ps2emu_load_disc(
             return -3;
         }
     };
-    match core.system.load_disc_boot_elf(image) {
-        Ok(Some((boot_path, loaded))) => {
-            core.disc_loaded = true;
-            set_status(core, format!(
-                "ELF carregado diretamente: {boot_path}; entrada {:#010x}; {} segmentos. Boot de BIOS não implementado.",
-                loaded.entry,
-                loaded.segments.len(),
-            ));
-            0
-        }
-        Ok(None) => {
-            core.disc_loaded = false;
-            set_status(core, "ISO montada, mas SYSTEM.CNF não apontou para um ELF carregável.");
-            -4
-        }
-        Err(error) => {
-            core.disc_loaded = false;
-            set_status(core, error.to_string());
-            -5
-        }
-    }
+    core.system.mount_cdvd(image);
+    core.disc_loaded = true;
+    set_status(&mut core, "ISO montada no CDVD; execução iniciará pelo vetor da BIOS.");
+    0
 }
 
 #[no_mangle]

@@ -137,7 +137,7 @@ public final class MainActivity extends Activity {
                         else isoPath = path;
                         status.setText((isBios
                                 ? "BIOS carregada nos mapas EE e IOP.\n"
-                                : "ISO analisada; ELF de inicialização carregado diretamente.\n")
+                                : "ISO montada no CDVD para inicialização pela BIOS.\n")
                                 + nativeMessage);
                     } else {
                         status.setText((isBios ? "Falha ao carregar BIOS" : "Falha ao analisar ISO")
