@@ -291,8 +291,8 @@ public final class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 status.setText((result == 0
-                        ? "Continuação concluída; estado preservado entre probes.\\n"
-                        : "Continuação interrompida (" + result + ").\\n") + nativeMessage);
+                        ? "Continuação concluída; estado preservado entre probes.\n"
+                        : "Continuação interrompida (" + result + ").\n") + nativeMessage);
                 setControlsEnabled(true);
             });
         });
