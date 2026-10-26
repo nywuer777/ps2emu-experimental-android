@@ -155,7 +155,10 @@ impl CdvdImage {
     pub fn volume_blocks(&self) -> u32 { self.volume_blocks }
 
     pub fn read_sector(&self, lba: u32) -> Result<[u8; ISO_SECTOR_SIZE], CdvdError> {
-        if lba >= self.volume_blocks.max(1) {
+        // The primary volume descriptor itself lives at LBA 16 and supplies
+        // `volume_blocks`. Until that descriptor has been read, enforce only
+        // the physical image length; afterward enforce the declared volume.
+        if self.volume_blocks != 0 && lba >= self.volume_blocks {
             return Err(CdvdError::RangeOverflow);
         }
         let (stride, payload_offset) = match self.format {
