@@ -65,6 +65,9 @@ pub struct Ps2System {
     iop_memory: IopMemory,
     iop_clock_phase: u64,
     scheduler_steps: u64,
+    ee_pc_trace: [u32; 16],
+    ee_pc_trace_len: usize,
+    ee_pc_trace_next: usize,
 }
 
 impl Default for Ps2System {
@@ -81,6 +84,9 @@ impl Ps2System {
             iop_memory: IopMemory::with_sif(sif),
             iop_clock_phase: 0,
             scheduler_steps: 0,
+            ee_pc_trace: [0; 16],
+            ee_pc_trace_len: 0,
+            ee_pc_trace_next: 0,
         }
     }
 
@@ -118,6 +124,7 @@ impl Ps2System {
         let loaded = load_elf32_mips(image, &mut self.ee_memory)?;
         self.ee_memory.reset_diagnostic_counters();
         self.ee = Cpu::new(loaded.entry);
+        self.reset_ee_pc_trace();
         Ok(loaded)
     }
 
@@ -129,6 +136,9 @@ impl Ps2System {
 
     /// Execute one EE instruction and any IOP instruction due at this clock point.
     pub fn step(&mut self) -> Result<(), Ps2Error> {
+        self.ee_pc_trace[self.ee_pc_trace_next] = self.ee.pc;
+        self.ee_pc_trace_next = (self.ee_pc_trace_next + 1) % self.ee_pc_trace.len();
+        self.ee_pc_trace_len = (self.ee_pc_trace_len + 1).min(self.ee_pc_trace.len());
         let cycles_before = self.ee.cpu_cycles;
         self.ee.step(&mut self.ee_memory).map_err(Ps2Error::EeFault)?;
         let elapsed = self.ee.cpu_cycles.wrapping_sub(cycles_before).max(1);
@@ -174,6 +184,7 @@ impl Ps2System {
         self.iop = IopCpu::new(0xbfc0_0000);
         self.iop_clock_phase = 0;
         self.scheduler_steps = 0;
+        self.reset_ee_pc_trace();
     }
 
     pub fn ee(&self) -> &Cpu { &self.ee }
@@ -193,6 +204,21 @@ impl Ps2System {
         self.iop_memory.set_gamepad_sticks(port, sticks);
     }
     pub fn scheduler_steps(&self) -> u64 { self.scheduler_steps }
+
+    /// Most recently executed EE PCs, ordered oldest to newest.
+    pub fn recent_ee_pcs(&self) -> Vec<u32> {
+        let start = (self.ee_pc_trace_next + self.ee_pc_trace.len() - self.ee_pc_trace_len)
+            % self.ee_pc_trace.len();
+        (0..self.ee_pc_trace_len)
+            .map(|index| self.ee_pc_trace[(start + index) % self.ee_pc_trace.len()])
+            .collect()
+    }
+
+    fn reset_ee_pc_trace(&mut self) {
+        self.ee_pc_trace = [0; 16];
+        self.ee_pc_trace_len = 0;
+        self.ee_pc_trace_next = 0;
+    }
 
     fn validate_bios(processor: &'static str, image: &[u8]) -> Result<(), Ps2Error> {
         if image.is_empty() || image.len() > BIOS_ROM_SIZE || BIOS_ROM_SIZE % image.len() != 0 {
