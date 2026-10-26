@@ -14,6 +14,7 @@ struct AndroidCore {
     system: Ps2System,
     bios_loaded: bool,
     disc_loaded: bool,
+    direct_elf_loaded: bool,
     bios_crc32: Option<u32>,
     bios_sha1: Option<[u8; 20]>,
     status: String,
@@ -193,6 +194,7 @@ pub extern "C" fn ps2emu_create() -> *mut c_void {
         system: Ps2System::new(),
         bios_loaded: false,
         disc_loaded: false,
+        direct_elf_loaded: false,
         bios_crc32: None,
         bios_sha1: None,
         status: String::new(),
@@ -231,6 +233,7 @@ pub unsafe extern "C" fn ps2emu_load_bios(
         Ok(()) => {
             core.bios_loaded = true;
             core.disc_loaded = false;
+            core.direct_elf_loaded = false;
             core.bios_crc32 = Some(crc32(&bytes));
             core.bios_sha1 = Some(sha1(&bytes));
             set_status(core, format!("BIOS aceita, {} bytes; mesma imagem usada nos mapas EE e IOP.", bytes.len()));
@@ -264,8 +267,50 @@ pub unsafe extern "C" fn ps2emu_load_disc(
     };
     core.system.mount_cdvd(image);
     core.disc_loaded = true;
+    core.direct_elf_loaded = false;
     set_status(core, "ISO montada no CDVD; execução iniciará pelo vetor da BIOS.");
     0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ps2emu_load_disc_elf(
+    handle: *mut c_void,
+    path: *const c_char,
+) -> i32 {
+    let Some(core) = handle.cast::<AndroidCore>().as_mut() else {
+        return -1;
+    };
+    let path = match path_from_ptr(path) {
+        Ok(path) => path,
+        Err(code) => return code,
+    };
+    let image = match CdvdImage::open(path) {
+        Ok(image) => image,
+        Err(error) => {
+            set_status(core, error.to_string());
+            return -3;
+        }
+    };
+    match core.system.load_disc_boot_elf(image) {
+        Ok(Some((boot_path, loaded))) => {
+            core.disc_loaded = true;
+            core.direct_elf_loaded = true;
+            set_status(core, format!(
+                "ELF direto carregado, sem BIOS: {boot_path}; entrada {:#010x}; segmentos {}.",
+                loaded.entry,
+                loaded.segments.len(),
+            ));
+            0
+        }
+        Ok(None) => {
+            set_status(core, "ISO montada, sem SYSTEM.CNF/ELF boot elegível.");
+            -4
+        }
+        Err(error) => {
+            set_status(core, format!("Falha ao carregar ELF direto: {error}"));
+            -5
+        }
+    }
 }
 
 #[no_mangle]
@@ -273,7 +318,7 @@ pub unsafe extern "C" fn ps2emu_run(handle: *mut c_void, steps: u64) -> i32 {
     let Some(core) = handle.cast::<AndroidCore>().as_mut() else {
         return -1;
     };
-    if !core.bios_loaded || !core.disc_loaded {
+    if (!core.bios_loaded || !core.disc_loaded) && !core.direct_elf_loaded {
         set_status(core, "Selecione uma BIOS aceita e uma ISO com ELF inicializável.");
         return -2;
     }
