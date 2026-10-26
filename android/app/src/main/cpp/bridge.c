@@ -106,7 +106,7 @@ JNIEXPORT jstring JNICALL Java_org_horizon_ps2_MainActivity_nativeStatus(JNIEnv 
     (void)self;
     if (!ensure_core()) return (*env)->NewStringUTF(env, core_error);
     if (handle == 0) return (*env)->NewStringUTF(env, "PS2 core initialization failed");
-    char buffer[512] = {0};
+    char buffer[2048] = {0};
     core_status((void *)(intptr_t)handle, buffer, sizeof(buffer));
     return (*env)->NewStringUTF(env, buffer);
 }
