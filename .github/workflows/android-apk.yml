@@ -21,9 +21,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
-      - uses: android-actions/setup-ndk@v3
-        with:
-          ndk-version: 27.2.12479018
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;27.2.12479018"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
