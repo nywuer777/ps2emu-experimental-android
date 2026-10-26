@@ -7,3 +7,4 @@ set_target_properties(ps2emu_core PROPERTIES
 )
 add_library(ps2emu_jni SHARED bridge.c)
 target_link_libraries(ps2emu_jni ps2emu_core log)
+target_link_options(ps2emu_jni PRIVATE "-Wl,-z,max-page-size=16384")
