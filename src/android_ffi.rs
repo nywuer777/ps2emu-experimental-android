@@ -15,6 +15,7 @@ struct AndroidCore {
     bios_loaded: bool,
     disc_loaded: bool,
     bios_crc32: Option<u32>,
+    bios_sha1: Option<[u8; 20]>,
     status: String,
 }
 
@@ -27,6 +28,66 @@ fn crc32(bytes: &[u8]) -> u32 {
         }
     }
     !crc
+}
+
+fn sha1(bytes: &[u8]) -> [u8; 20] {
+    let mut data = bytes.to_vec();
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    data.push(0x80);
+    while data.len() % 64 != 56 {
+        data.push(0);
+    }
+    data.extend_from_slice(&bit_len.to_be_bytes());
+
+    let mut h = [
+        0x6745_2301u32,
+        0xefcd_ab89,
+        0x98ba_dcfe,
+        0x1032_5476,
+        0xc3d2_e1f0,
+    ];
+    for chunk in data.chunks_exact(64) {
+        let mut w = [0u32; 80];
+        for (i, word) in chunk.chunks_exact(4).enumerate() {
+            w[i] = u32::from_be_bytes(word.try_into().unwrap());
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, word) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | ((!b) & d), 0x5a82_7999),
+                20..=39 => (b ^ c ^ d, 0x6ed9_eba1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1b_bcdc),
+                _ => (b ^ c ^ d, 0xca62_c1d6),
+            };
+            let next = a.rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*word);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = next;
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+    }
+    let mut digest = [0u8; 20];
+    for (word, out) in h.iter().zip(digest.chunks_exact_mut(4)) {
+        out.copy_from_slice(&word.to_be_bytes());
+    }
+    digest
+}
+
+fn hex_sha1(digest: &[u8; 20]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
@@ -75,9 +136,11 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         .map(|(pc, instruction)| format!("{pc:08x}:{instruction:08x}"))
         .collect::<Vec<_>>()
         .join(" ");
-    let bios_fingerprint = core.bios_crc32
-        .map(|value| format!("\nBIOS CRC32: {value:08x}"))
-        .unwrap_or_default();
+    let bios_fingerprint = match (core.bios_crc32, core.bios_sha1.as_ref()) {
+        (Some(crc), Some(sha1)) => format!("\nBIOS CRC32: {crc:08x}\nBIOS SHA-1: {}", hex_sha1(sha1)),
+        (Some(crc), None) => format!("\nBIOS CRC32: {crc:08x}"),
+        _ => String::new(),
+    };
     core.status = format!(
         "{}{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE exception: {} (ExcCode {})\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{} ({})\nEE last fault PC/instruction: {:#010x}/{:#010x} ({})\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
@@ -131,6 +194,7 @@ pub extern "C" fn ps2emu_create() -> *mut c_void {
         bios_loaded: false,
         disc_loaded: false,
         bios_crc32: None,
+        bios_sha1: None,
         status: String::new(),
     });
     set_status(&mut core, "Núcleo inicializado; selecione BIOS e ISO.");
@@ -168,6 +232,7 @@ pub unsafe extern "C" fn ps2emu_load_bios(
             core.bios_loaded = true;
             core.disc_loaded = false;
             core.bios_crc32 = Some(crc32(&bytes));
+            core.bios_sha1 = Some(sha1(&bytes));
             set_status(core, format!("BIOS aceita, {} bytes; mesma imagem usada nos mapas EE e IOP.", bytes.len()));
             0
         }
