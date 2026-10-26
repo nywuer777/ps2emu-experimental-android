@@ -1428,6 +1428,10 @@ impl Cpu {
                     0x05 => self.fpr[fd as usize] = lhs.abs().to_bits(),
                     0x06 => self.fpr[fd as usize] = self.fpr[fs as usize],
                     0x07 => self.fpr[fd as usize] = (-lhs).to_bits(),
+                    0x16 => {
+                        let divisor = if rhs < 0.0 { (-rhs).sqrt() } else { rhs.sqrt() };
+                        self.fpr[fd as usize] = (lhs / divisor).to_bits();
+                    }
                     0x0c..=0x0f | 0x24 => {
                         let rounded = match function {
                             0x0c => lhs.round(),
@@ -1445,6 +1449,26 @@ impl Cpu {
                         self.fpr[fd as usize] = integer as u32;
                     }
                     0x18 => self.fpu_acc = (lhs + rhs).to_bits(), // ADDA.S
+                    0x19 => self.fpu_acc = (lhs - rhs).to_bits(), // SUBA.S
+                    0x1a => self.fpu_acc = (lhs * rhs).to_bits(), // MULA.S
+                    0x1c => {
+                        let acc = f32::from_bits(self.fpu_acc);
+                        self.fpr[fd as usize] = (acc + lhs * rhs).to_bits(); // MADD.S
+                    }
+                    0x1d => {
+                        let acc = f32::from_bits(self.fpu_acc);
+                        self.fpr[fd as usize] = (acc - lhs * rhs).to_bits(); // MSUB.S
+                    }
+                    0x1e => {
+                        let acc = f32::from_bits(self.fpu_acc);
+                        self.fpu_acc = (acc + lhs * rhs).to_bits(); // MADDA.S
+                    }
+                    0x1f => {
+                        let acc = f32::from_bits(self.fpu_acc);
+                        self.fpu_acc = (acc - lhs * rhs).to_bits(); // MSUBA.S
+                    }
+                    0x28 => self.fpr[fd as usize] = lhs.max(rhs).to_bits(),
+                    0x29 => self.fpr[fd as usize] = lhs.min(rhs).to_bits(),
                     0x30 | 0x32 | 0x3c | 0x3e => {
                         let condition = match function {
                             0x30 => false,
