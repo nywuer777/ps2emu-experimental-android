@@ -44,6 +44,7 @@ public final class MainActivity extends Activity {
 
     private static final int PICK_BIOS = 1;
     private static final int PICK_ISO = 2;
+    private static final long PROBE_STEPS = 16_000_000L;
     private static final long PROGRESS_INTERVAL = 8L * 1024L * 1024L;
 
     @Override
@@ -71,7 +72,7 @@ public final class MainActivity extends Activity {
 
         biosButton = button("Selecionar BIOS");
         discButton = button("Selecionar ISO");
-        runButton = button("Executar 100 mil passos");
+        runButton = button("Executar 16 milhões de passos");
         status = new TextView(this);
         status.setTextColor(0xffffffff);
         status.setTextSize(14);
@@ -219,7 +220,7 @@ public final class MainActivity extends Activity {
         setControlsEnabled(false);
         status.setText("Executando o probe do núcleo...");
         worker.execute(() -> {
-            int result = nativeRun(core, 100_000);
+            int result = nativeRun(core, PROBE_STEPS);
             String nativeMessage = nativeStatus(core);
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;

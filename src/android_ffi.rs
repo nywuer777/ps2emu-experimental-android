@@ -29,7 +29,7 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         .collect::<Vec<_>>()
         .join(" ");
     core.status = format!(
-        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE fault instruction: {:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
+        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE fault instruction: {:#010x}\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
         snapshot.pc,
         snapshot.retired_instructions,
@@ -38,6 +38,9 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         snapshot.cp0[14],
         snapshot.cp0[8],
         snapshot.last_exception_instruction,
+        snapshot.gpr[1] as u32,
+        snapshot.gpr[2] as u32,
+        snapshot.gpr[3] as u32,
         recent_trace,
         iop.pc,
         iop.retired_instructions,
