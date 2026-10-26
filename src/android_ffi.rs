@@ -139,7 +139,7 @@ pub unsafe extern "C" fn ps2emu_load_disc(
     };
     core.system.mount_cdvd(image);
     core.disc_loaded = true;
-    set_status(&mut core, "ISO montada no CDVD; execução iniciará pelo vetor da BIOS.");
+    set_status(core, "ISO montada no CDVD; execução iniciará pelo vetor da BIOS.");
     0
 }
 
