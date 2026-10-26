@@ -146,6 +146,18 @@ impl Ps2System {
         Ok(())
     }
 
+    /// Run a diagnostic budget, stopping after the first newly taken EE exception.
+    pub fn run_ee_steps_until_exception(&mut self, count: u64) -> Result<u64, Ps2Error> {
+        let initial_exceptions = self.ee.exceptions_taken;
+        for completed in 0..count {
+            self.step()?;
+            if self.ee.exceptions_taken != initial_exceptions {
+                return Ok(completed + 1);
+            }
+        }
+        Ok(count)
+    }
+
     /// Stop before executing the target EE instruction. Returns false if the
     /// budget expires; both CPUs and devices remain available for inspection.
     pub fn run_until_ee_pc(&mut self, target: u32, budget: u64) -> Result<bool, Ps2Error> {
