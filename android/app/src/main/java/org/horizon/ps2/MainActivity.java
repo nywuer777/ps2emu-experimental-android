@@ -57,6 +57,11 @@ public final class MainActivity extends Activity {
         root.setPadding(28, 48, 28, 24);
         root.setGravity(Gravity.CENTER_VERTICAL);
         root.setBackgroundColor(0xff101114);
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.setPadding(28, 48 + insets.getSystemWindowInsetTop(), 28,
+                    24 + insets.getSystemWindowInsetBottom());
+            return insets;
+        });
 
         TextView title = new TextView(this);
         title.setText("PS2 Experimental");
@@ -72,7 +77,7 @@ public final class MainActivity extends Activity {
 
         biosButton = button("Selecionar BIOS");
         discButton = button("Selecionar ISO");
-        runButton = button("Executar 16 milhões de passos");
+        runButton = button("Executar até exceção (limite 16M)");
         status = new TextView(this);
         status.setTextColor(0xffffffff);
         status.setTextSize(14);
