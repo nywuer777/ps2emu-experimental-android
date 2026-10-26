@@ -20,11 +20,21 @@ struct AndroidCore {
 
 fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
     let snapshot = core.system.ee().snapshot();
+    let iop = core.system.iop();
+    let gs = core.system.ee_memory().gs();
     core.status = format!(
-        "{}\nEE PC: {:#010x}\nEE instructions: {}\nScheduler steps: {}",
+        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC: {:#x}/{:#010x}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
         snapshot.pc,
         snapshot.retired_instructions,
+        snapshot.exceptions_taken,
+        (snapshot.cp0[13] >> 2) & 0x1f,
+        snapshot.cp0[14],
+        iop.pc,
+        iop.retired_instructions,
+        iop.exceptions_taken,
+        gs.submitted_vertices(),
+        gs.ignored_register_writes(),
         core.system.scheduler_steps(),
     );
 }
