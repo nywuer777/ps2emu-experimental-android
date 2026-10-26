@@ -22,13 +22,16 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
     let iop = core.system.iop();
     let gs = core.system.ee_memory().gs();
     let dma = core.system.ee_memory().diagnostic_counters();
+    let exception_epc_instruction = core.system.ee_memory()
+        .read_u32(snapshot.cp0[14])
+        .unwrap_or(0);
     let recent_trace = core.system.recent_ee_trace();
     let recent_trace = recent_trace.iter().rev().take(8).rev()
         .map(|(pc, instruction)| format!("{pc:08x}:{instruction:08x}"))
         .collect::<Vec<_>>()
         .join(" ");
     core.status = format!(
-        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE last fault PC/instruction: {:#010x}/{:#010x}\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
+        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{}\nEE last fault PC/instruction: {:#010x}/{:#010x}\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
         snapshot.pc,
         snapshot.retired_instructions,
@@ -36,6 +39,8 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         (snapshot.cp0[13] >> 2) & 0x1f,
         snapshot.cp0[14],
         snapshot.cp0[8],
+        exception_epc_instruction,
+        snapshot.cp0[13] >> 31 != 0,
         snapshot.last_exception_pc,
         snapshot.last_exception_instruction,
         snapshot.gpr[1] as u32,
