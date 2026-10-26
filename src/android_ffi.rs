@@ -132,6 +132,18 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
     } else {
         format!("primary opcode {fault_opcode:#04x}")
     };
+    let reserved_bios_mmi = if exception_code == 10
+        && (0xbfc0_0000..0xbfc8_0000).contains(&snapshot.last_exception_pc)
+        && fault_opcode == 0x1c
+        && fault_mmi_function == 0x26
+    {
+        format!(
+            "\nDiagnóstico: MMI 0x26 reservado na BIOS ROM, PC {:#010x}; confira a imagem de firmware.",
+            snapshot.last_exception_pc
+        )
+    } else {
+        String::new()
+    };
     let recent_trace = core.system.recent_ee_trace();
     let recent_trace = recent_trace.iter().rev().take(8).rev()
         .map(|(pc, instruction)| format!("{pc:08x}:{instruction:08x}"))
@@ -143,9 +155,10 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         _ => String::new(),
     };
     core.status = format!(
-        "{}{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE exception: {} (ExcCode {})\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{} ({})\nEE last fault PC/instruction: {:#010x}/{:#010x} ({})\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
+        "{}{}{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE exception: {} (ExcCode {})\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{} ({})\nEE last fault PC/instruction: {:#010x}/{:#010x} ({})\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
         bios_fingerprint,
+        reserved_bios_mmi,
         snapshot.pc,
         snapshot.retired_instructions,
         snapshot.exceptions_taken,
