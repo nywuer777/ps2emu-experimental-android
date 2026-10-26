@@ -18,6 +18,7 @@ static create_fn core_create;
 static destroy_fn core_destroy;
 static load_fn core_load_bios;
 static load_fn core_load_disc;
+static load_fn core_load_disc_elf;
 static run_fn core_run;
 static status_fn core_status;
 static char core_error[256] = "PS2 core is not initialized";
@@ -34,11 +35,12 @@ static void load_core_symbols(void) {
     core_destroy = (destroy_fn)dlsym(core_library, "ps2emu_destroy");
     core_load_bios = (load_fn)dlsym(core_library, "ps2emu_load_bios");
     core_load_disc = (load_fn)dlsym(core_library, "ps2emu_load_disc");
+    core_load_disc_elf = (load_fn)dlsym(core_library, "ps2emu_load_disc_elf");
     core_run = (run_fn)dlsym(core_library, "ps2emu_run");
     core_status = (status_fn)dlsym(core_library, "ps2emu_status");
     const char *error = dlerror();
     if (error != NULL || core_create == NULL || core_destroy == NULL ||
-        core_load_bios == NULL || core_load_disc == NULL || core_run == NULL ||
+        core_load_bios == NULL || core_load_disc == NULL || core_load_disc_elf == NULL || core_run == NULL ||
         core_status == NULL) {
         snprintf(core_error, sizeof(core_error), "PS2 core exports are incomplete: %s",
                  error != NULL ? error : "missing symbol");
@@ -48,6 +50,7 @@ static void load_core_symbols(void) {
         core_destroy = NULL;
         core_load_bios = NULL;
         core_load_disc = NULL;
+        core_load_disc_elf = NULL;
         core_run = NULL;
         core_status = NULL;
         return;
@@ -92,6 +95,17 @@ JNIEXPORT jint JNICALL Java_org_horizon_ps2_MainActivity_nativeLoadBios(JNIEnv *
 JNIEXPORT jint JNICALL Java_org_horizon_ps2_MainActivity_nativeLoadDisc(JNIEnv *env, jobject self, jlong handle, jstring path) {
     (void)self;
     return call_path(env, handle, path, 1);
+}
+
+JNIEXPORT jint JNICALL Java_org_horizon_ps2_MainActivity_nativeLoadDiscElf(JNIEnv *env, jobject self, jlong handle, jstring path) {
+    (void)self;
+    if (!ensure_core()) return -100;
+    if (path == NULL || handle == 0) return -1;
+    const char *utf = (*env)->GetStringUTFChars(env, path, NULL);
+    if (utf == NULL) return -2;
+    int result = core_load_disc_elf((void *)(intptr_t)handle, utf);
+    (*env)->ReleaseStringUTFChars(env, path, utf);
+    return result;
 }
 
 JNIEXPORT jint JNICALL Java_org_horizon_ps2_MainActivity_nativeRun(JNIEnv *env, jobject self, jlong handle, jlong steps) {
