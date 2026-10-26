@@ -41,6 +41,7 @@ pub struct Cpu {
     pending_branch: Option<PendingBranch>,
     pub retired_instructions: u64,
     pub exceptions_taken: u64,
+    pub last_exception_pc: u32,
     pub last_exception_instruction: u32,
     pub cpu_cycles: u64,
     count_subcycle: u8,
@@ -71,6 +72,7 @@ pub struct CpuSnapshot {
     pub vu_microprograms_started: [u64; 2],
     pub retired_instructions: u64,
     pub exceptions_taken: u64,
+    pub last_exception_pc: u32,
     pub last_exception_instruction: u32,
     pub cpu_cycles: u64,
 }
@@ -777,6 +779,7 @@ impl Cpu {
             pending_branch: None,
             retired_instructions: 0,
             exceptions_taken: 0,
+            last_exception_pc: 0,
             last_exception_instruction: 0,
             cpu_cycles: 0,
             count_subcycle: 0,
@@ -808,6 +811,7 @@ impl Cpu {
             vu_microprograms_started: self.vu_microprograms_started,
             retired_instructions: self.retired_instructions,
             exceptions_taken: self.exceptions_taken,
+            last_exception_pc: self.last_exception_pc,
             last_exception_instruction: self.last_exception_instruction,
             cpu_cycles: self.cpu_cycles,
         }
@@ -879,6 +883,7 @@ impl Cpu {
             Err(fault) => {
                 let delay_slot = old_branch.is_some();
                 let (code, bad_vaddr) = exception_for_fault(&fault, instruction);
+                self.last_exception_pc = pc;
                 self.last_exception_instruction = instruction;
                 self.enter_exception(code, pc, delay_slot, bad_vaddr);
                 self.advance_cycles(1, memory);
