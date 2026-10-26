@@ -27,6 +27,25 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         .unwrap_or(0);
     let exception_opcode = exception_epc_instruction >> 26;
     let exception_mmi_function = exception_epc_instruction & 0x3f;
+    let exception_code = (snapshot.cp0[13] >> 2) & 0x1f;
+    let exception_name = match exception_code {
+        0 => "interrupt",
+        1 => "TLB modified",
+        2 => "TLB load",
+        3 => "TLB store",
+        4 => "address error on load",
+        5 => "address error on store",
+        6 => "bus error on instruction fetch",
+        7 => "bus error on data access",
+        8 => "syscall",
+        9 => "breakpoint",
+        10 => "reserved instruction",
+        11 => "coprocessor unusable",
+        12 => "arithmetic overflow",
+        13 => "trap",
+        14 => "virtual coherency",
+        _ => "processor exception",
+    };
     let fault_opcode = snapshot.last_exception_instruction >> 26;
     let fault_mmi_function = snapshot.last_exception_instruction & 0x3f;
     let opcode_diagnostic = if exception_opcode == 0x1c {
@@ -45,12 +64,13 @@ fn set_status(core: &mut AndroidCore, message: impl AsRef<str>) {
         .collect::<Vec<_>>()
         .join(" ");
     core.status = format!(
-        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{} ({})\nEE last fault PC/instruction: {:#010x}/{:#010x} ({})\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
+        "{}\nEE PC: {:#010x}\nEE instructions: {}\nEE exceptions: {}\nEE exception: {} (ExcCode {})\nEE cause/EPC/BadVAddr: {:#x}/{:#010x}/{:#010x}\nEE EPC instruction/BD: {:#010x}/{} ({})\nEE last fault PC/instruction: {:#010x}/{:#010x} ({})\nEE loop r1/r2/r3: {:#010x}/{:#010x}/{:#010x}\nEE trace PC/opcode: {}\nIOP PC: {:#010x}\nIOP instructions/exceptions: {}/{}\nVIF DMA: {}/{}; unpack vectors: {}; VU micro bytes: {}\nVU starts: {}/{}; GIF qwords: {}; VIF direct qwords: {}\nGS vertices/ignored writes: {}/{}\nScheduler steps: {}",
         message.as_ref(),
         snapshot.pc,
         snapshot.retired_instructions,
         snapshot.exceptions_taken,
-        (snapshot.cp0[13] >> 2) & 0x1f,
+        exception_name,
+        exception_code,
         snapshot.cp0[14],
         snapshot.cp0[8],
         exception_epc_instruction,
