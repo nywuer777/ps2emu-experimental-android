@@ -43,6 +43,8 @@ public final class MainActivity extends Activity {
     private Button discButton;
     private Button runButton;
     private Button directRunButton;
+    private Button continueButton;
+    private boolean machineStarted;
 
     private static final int PICK_BIOS = 1;
     private static final int PICK_ISO = 2;
@@ -82,6 +84,7 @@ public final class MainActivity extends Activity {
         discButton = button("Selecionar ISO");
         runButton = button("Executar BIOS até exceção (limite 16M)");
         directRunButton = button("Executar ELF direto até exceção (limite 1M)");
+        continueButton = button("Continuar EE até próxima exceção (limite 1M)");
         status = new TextView(this);
         status.setTextColor(0xffffffff);
         status.setTextSize(14);
@@ -96,6 +99,7 @@ public final class MainActivity extends Activity {
         root.addView(discButton);
         root.addView(runButton);
         root.addView(directRunButton);
+        root.addView(continueButton);
         root.addView(statusScroller, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
@@ -104,6 +108,7 @@ public final class MainActivity extends Activity {
         discButton.setOnClickListener(view -> pick(PICK_ISO));
         runButton.setOnClickListener(view -> run());
         directRunButton.setOnClickListener(view -> runDirectElf());
+        continueButton.setOnClickListener(view -> continueExecution());
         refresh();
     }
 
@@ -146,6 +151,7 @@ public final class MainActivity extends Activity {
                     if (result == 0) {
                         if (isBios) biosPath = path;
                         else isoPath = path;
+                        machineStarted = false;
                         status.setText((isBios
                                 ? "BIOS carregada nos mapas EE e IOP.\n"
                                 : "ISO montada no CDVD para inicialização pela BIOS.\n")
@@ -222,6 +228,7 @@ public final class MainActivity extends Activity {
         discButton.setEnabled(enabled);
         runButton.setEnabled(enabled);
         directRunButton.setEnabled(enabled);
+        continueButton.setEnabled(enabled);
     }
 
     private void run() {
@@ -230,6 +237,7 @@ public final class MainActivity extends Activity {
             return;
         }
         setControlsEnabled(false);
+        machineStarted = true;
         status.setText("Executando o probe do núcleo...");
         worker.execute(() -> {
             int result = nativeRun(core, PROBE_STEPS);
@@ -250,12 +258,14 @@ public final class MainActivity extends Activity {
             return;
         }
         setControlsEnabled(false);
+        machineStarted = false;
         status.setText("Carregando o ELF da ISO e executando sem BIOS...");
         worker.execute(() -> {
             int loadResult = nativeLoadDiscElf(core, isoPath);
             int runResult = loadResult == 0
                     ? nativeRun(core, DIRECT_PROBE_STEPS)
                     : loadResult;
+            machineStarted = loadResult == 0;
             String nativeMessage = nativeStatus(core);
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
@@ -263,6 +273,26 @@ public final class MainActivity extends Activity {
                         ? "Probe ELF direto concluído. Este caminho não representa boot completo.\n"
                         : "Probe ELF direto interrompido (" + runResult + ").\n")
                         + nativeMessage);
+                setControlsEnabled(true);
+            });
+        });
+    }
+
+    private void continueExecution() {
+        if (!machineStarted) {
+            status.setText("Execute primeiro o probe da BIOS ou o ELF direto.");
+            return;
+        }
+        setControlsEnabled(false);
+        status.setText("Continuando do PC atual até a próxima exceção do EE...");
+        worker.execute(() -> {
+            int result = nativeRun(core, DIRECT_PROBE_STEPS);
+            String nativeMessage = nativeStatus(core);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                status.setText((result == 0
+                        ? "Continuação concluída; estado preservado entre probes.\\n"
+                        : "Continuação interrompida (" + result + ").\\n") + nativeMessage);
                 setControlsEnabled(true);
             });
         });
