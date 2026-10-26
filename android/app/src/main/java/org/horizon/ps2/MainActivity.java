@@ -9,6 +9,7 @@ import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
@@ -74,11 +75,18 @@ public final class MainActivity extends Activity {
         status = new TextView(this);
         status.setTextColor(0xffffffff);
         status.setTextSize(14);
+        status.setTextIsSelectable(true);
+
+        ScrollView statusScroller = new ScrollView(this);
+        statusScroller.setFillViewport(true);
+        statusScroller.setVerticalScrollBarEnabled(true);
+        statusScroller.addView(status);
 
         root.addView(biosButton);
         root.addView(discButton);
         root.addView(runButton);
-        root.addView(status);
+        root.addView(statusScroller, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
 
         biosButton.setOnClickListener(view -> pick(PICK_BIOS));

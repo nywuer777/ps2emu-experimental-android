@@ -66,6 +66,7 @@ pub struct Ps2System {
     iop_clock_phase: u64,
     scheduler_steps: u64,
     ee_pc_trace: [u32; 16],
+    ee_instruction_trace: [u32; 16],
     ee_pc_trace_len: usize,
     ee_pc_trace_next: usize,
 }
@@ -85,6 +86,7 @@ impl Ps2System {
             iop_clock_phase: 0,
             scheduler_steps: 0,
             ee_pc_trace: [0; 16],
+            ee_instruction_trace: [0; 16],
             ee_pc_trace_len: 0,
             ee_pc_trace_next: 0,
         }
@@ -136,7 +138,10 @@ impl Ps2System {
 
     /// Execute one EE instruction and any IOP instruction due at this clock point.
     pub fn step(&mut self) -> Result<(), Ps2Error> {
-        self.ee_pc_trace[self.ee_pc_trace_next] = self.ee.pc;
+        let pc = self.ee.pc;
+        let instruction = self.ee_memory.read_u32(pc).unwrap_or(0);
+        self.ee_pc_trace[self.ee_pc_trace_next] = pc;
+        self.ee_instruction_trace[self.ee_pc_trace_next] = instruction;
         self.ee_pc_trace_next = (self.ee_pc_trace_next + 1) % self.ee_pc_trace.len();
         self.ee_pc_trace_len = (self.ee_pc_trace_len + 1).min(self.ee_pc_trace.len());
         let cycles_before = self.ee.cpu_cycles;
@@ -214,8 +219,21 @@ impl Ps2System {
             .collect()
     }
 
+    /// Most recently fetched EE instructions, paired with their guest PCs.
+    pub fn recent_ee_trace(&self) -> Vec<(u32, u32)> {
+        let start = (self.ee_pc_trace_next + self.ee_pc_trace.len() - self.ee_pc_trace_len)
+            % self.ee_pc_trace.len();
+        (0..self.ee_pc_trace_len)
+            .map(|index| {
+                let slot = (start + index) % self.ee_pc_trace.len();
+                (self.ee_pc_trace[slot], self.ee_instruction_trace[slot])
+            })
+            .collect()
+    }
+
     fn reset_ee_pc_trace(&mut self) {
         self.ee_pc_trace = [0; 16];
+        self.ee_instruction_trace = [0; 16];
         self.ee_pc_trace_len = 0;
         self.ee_pc_trace_next = 0;
     }
