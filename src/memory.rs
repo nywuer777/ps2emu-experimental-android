@@ -20,6 +20,8 @@ pub const VU1_MEMORY_SIZE: usize = 16 * 1024;
 pub const EE_TLB_ENTRIES: usize = 48;
 pub const INTC_STAT: u32 = 0x1000_f000;
 pub const INTC_MASK: u32 = 0x1000_f010;
+pub const DMAC_EXT_BASE: u32 = 0x1000_f500;
+pub const DMAC_EXT_SIZE: usize = 0x100;
 pub const EE_TIMER_BASE: u32 = 0x1000_0000;
 pub const EE_TIMER_STRIDE: u32 = 0x800;
 pub const EE_TIMER_COUNT: u32 = 0x00;
@@ -122,6 +124,7 @@ pub struct Memory {
     tlb_asid_hint: u32,
     intc: Intc,
     d_stat: u32,
+    dmac_ext: [u32; DMAC_EXT_SIZE / 4],
     gs: Gs,
     gif_chcr: u32,
     gif_madr: u32,
@@ -321,6 +324,7 @@ impl Memory {
             tlb_asid_hint: 0,
             intc: Intc::default(),
             d_stat: 0,
+            dmac_ext: [0; DMAC_EXT_SIZE / 4],
             gs: Gs::default(),
             gif_chcr: 0,
             gif_madr: 0,
@@ -1428,6 +1432,7 @@ impl Memory {
         Self::check_alignment(address, 4)?;
         let physical = self.translate(address, false)?;
         if physical == EE_D_STAT { return Ok(self.d_stat); }
+        if let Some(value) = self.read_dmac_ext(physical) { return Ok(value); }
         if physical == GS_BUSDIR { return Ok(self.gs_busdir as u32); }
         if let Some(value) = self.intc.read(physical) {
             return Ok(value);
@@ -1478,6 +1483,7 @@ impl Memory {
             self.gs_busdir = u64::from(value & 1);
             return Ok(());
         }
+        if self.write_dmac_ext(physical, value) { return Ok(()); }
         if self.intc.write(physical, value) {
             return Ok(());
         }
@@ -1487,6 +1493,25 @@ impl Memory {
         if self.sif.write_ee(physical, value) { return Ok(()); }
         if self.write_sif_dma_register(physical, value) { return Ok(()); }
         self.write_bytes(address, &value.to_le_bytes())
+    }
+
+    fn read_dmac_ext(&self, address: u32) -> Option<u32> {
+        let offset = address.checked_sub(DMAC_EXT_BASE)? as usize;
+        if offset >= DMAC_EXT_SIZE || offset % 4 != 0 {
+            return None;
+        }
+        Some(self.dmac_ext[offset / 4])
+    }
+
+    fn write_dmac_ext(&mut self, address: u32, value: u32) -> bool {
+        let Some(offset) = address.checked_sub(DMAC_EXT_BASE).map(|value| value as usize) else {
+            return false;
+        };
+        if offset >= DMAC_EXT_SIZE || offset % 4 != 0 {
+            return false;
+        }
+        self.dmac_ext[offset / 4] = value;
+        true
     }
 
     fn read_sif_dma_register(&self, address: u32) -> Option<u32> {
