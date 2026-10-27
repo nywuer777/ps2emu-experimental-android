@@ -237,16 +237,22 @@ public final class MainActivity extends Activity {
             return;
         }
         setControlsEnabled(false);
-        machineStarted = true;
-        status.setText("Executando o probe do núcleo...");
+        machineStarted = false;
+        status.setText("Reiniciando EE/IOP, montando a ISO e iniciando pela BIOS...");
         worker.execute(() -> {
-            int result = nativeRun(core, PROBE_STEPS);
+            int biosResult = nativeLoadBios(core, biosPath);
+            int discResult = biosResult == 0 ? nativeLoadDisc(core, isoPath) : biosResult;
+            int result = discResult == 0 ? nativeRun(core, PROBE_STEPS) : discResult;
+            machineStarted = discResult == 0;
             String nativeMessage = nativeStatus(core);
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
-                status.setText((result == 0
-                        ? "Probe concluído.\n"
-                        : "Probe interrompido (" + result + ").\n") + nativeMessage);
+                status.setText((discResult != 0
+                        ? "Boot BIOS interrompido ao preparar os arquivos (" + result + ").\\n"
+                        : result == 0
+                                ? "Probe de boot BIOS concluído.\\n"
+                                : "Probe de boot BIOS interrompido (" + result + ").\\n")
+                        + nativeMessage);
                 setControlsEnabled(true);
             });
         });
